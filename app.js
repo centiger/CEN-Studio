@@ -31,24 +31,110 @@ async function readJsonFile(input, label){
   }
 }
 
-function asArray(data){
-  if(Array.isArray(data)) return data;
-  if(!data || typeof data !== 'object') return [];
-  for(const key of ['places','maps','links','items','data']){
-    if(Array.isArray(data[key])) return data[key];
-  }
-  return Object.values(data).filter(v=>v && typeof v === 'object');
-}
-
 function pickId(item, keys){
   for(const key of keys){
     if(item && item[key] !== undefined && item[key] !== null && String(item[key]).trim()) return String(item[key]).trim();
   }
   return '';
 }
-
 function normalizeRelation(value){
-  return String(value || '').trim().toLowerCase();
+  return String(value || '').trim().toLowerCase().replace(/-/g,'_');
+}
+function looksLikePlaceId(id){ return /^P\d+/i.test(String(id||'')); }
+function looksLikeMapId(id){ return /^M\d+/i.test(String(id||'')); }
+function isUrl(value){ return /^https?:\/\//i.test(String(value||'')); }
+
+function getArray(data, preferredKeys=[]){
+  if(Array.isArray(data)) return data;
+  if(!data || typeof data !== 'object') return [];
+  for(const key of preferredKeys){
+    if(Array.isArray(data[key])) return data[key];
+  }
+  for(const key of ['places','maps','links','items','data','records','list']){
+    if(Array.isArray(data[key])) return data[key];
+  }
+  // 객체 자체가 { P001:{...}, P002:{...} } 또는 { M001:{...} } 형태일 때 보존
+  return Object.entries(data).map(([key,value])=>{
+    if(value && typeof value === 'object' && !Array.isArray(value)) return { _key:key, ...value };
+    return { _key:key, value };
+  });
+}
+
+function normalizePlaces(data){
+  const arr = getArray(data, ['places']);
+  return arr.map((p,idx)=>{
+    const id = pickId(p, ['place_id','placeId','id','_key']);
+    const name = pickId(p, ['canonical_name','name','title','ko_name','label']);
+    return { raw:p, index:idx, id, name };
+  });
+}
+
+function normalizeMaps(data){
+  const arr = getArray(data, ['maps']);
+  return arr.map((m,idx)=>{
+    const id = pickId(m, ['map_id','mapId','id','_key']);
+    const title = pickId(m, ['title','name','map_title','label']);
+    const url = pickId(m, ['url','href','link','official_url','map_url']);
+    return { raw:m, index:idx, id, title, url };
+  });
+}
+
+function normalizeLinks(data){
+  const out = [];
+  if(!data) return out;
+
+  // 배열형: [{place_id,map_id,...}, ...]
+  if(Array.isArray(data)){
+    data.forEach((item,idx)=>pushLinkItem(out, item, idx));
+    return out;
+  }
+
+  if(typeof data !== 'object') return out;
+
+  // 래퍼형: { links:[...] } / { place_map_links:[...] }
+  for(const key of ['links','place_map_links','placeMapLinks','items','data','records']){
+    if(Array.isArray(data[key])){
+      data[key].forEach((item,idx)=>pushLinkItem(out, item, idx));
+      return out;
+    }
+  }
+
+  // 객체형: { P001:[{map_id...}, "M001"], P002:{maps:[...]}, ... }
+  Object.entries(data).forEach(([placeKey,value],idx)=>{
+    if(Array.isArray(value)){
+      value.forEach((v,j)=>pushLinkItem(out, v, `${placeKey}.${j}`, placeKey));
+    }else if(value && typeof value === 'object'){
+      const nested = value.maps || value.map_ids || value.links || value.items || value.data;
+      if(Array.isArray(nested)){
+        nested.forEach((v,j)=>pushLinkItem(out, v, `${placeKey}.${j}`, placeKey, value));
+      }else{
+        pushLinkItem(out, value, idx, placeKey);
+      }
+    }else if(typeof value === 'string'){
+      pushLinkItem(out, value, idx, placeKey);
+    }
+  });
+  return out;
+}
+
+function pushLinkItem(out, item, index, fallbackPlaceId='', parent={}){
+  let placeId='', mapId='', relation='', url='';
+  if(typeof item === 'string'){
+    placeId = fallbackPlaceId;
+    mapId = item;
+  }else if(item && typeof item === 'object'){
+    placeId = pickId(item, ['place_id','placeId','place','pid']) || fallbackPlaceId || pickId(parent,['place_id','placeId','id']);
+    mapId = pickId(item, ['map_id','mapId','map','mid','id']);
+    relation = normalizeRelation(pickId(item, ['relation_type','relationship','relation','type','map_relation']));
+    url = pickId(item, ['url','href','link','map_url']);
+    // {M001:{...}}에서 key가 map_id일 수 있음
+    if(!mapId && item._key && looksLikeMapId(item._key)) mapId = item._key;
+  }
+  out.push({ raw:item, index, placeId:String(placeId||'').trim(), mapId:String(mapId||'').trim(), relation, url });
+}
+
+function runtimeEntries(data){
+  return normalizeLinks(data);
 }
 
 async function runQA(){
@@ -63,55 +149,57 @@ async function runQA(){
   const warnings = [];
   loaded.forEach(r=>{ if(!r.ok) errors.push({type:'JSON_LOAD', message:r.error}); });
 
-  const places = asArray(loaded[0].data);
-  const maps = asArray(loaded[1].data);
-  const links = asArray(loaded[2].data);
-  const runtime = loaded[3].data;
+  const places = normalizePlaces(loaded[0].data);
+  const maps = normalizeMaps(loaded[1].data);
+  const links = normalizeLinks(loaded[2].data);
+  const runtimeLinks = runtimeEntries(loaded[3].data);
 
   const placeIds = new Set();
   const mapIds = new Set();
-  const linkKeys = new Set();
+  const usedPlaceIds = new Set();
+  const usedMapIds = new Set();
   const duplicatePlaces = [];
   const duplicateMaps = [];
   const duplicateLinks = [];
-  const usedPlaceIds = new Set();
-  const usedMapIds = new Set();
   const relationStats = {};
+  const linkKeys = new Set();
 
-  places.forEach((p,idx)=>{
-    const id = pickId(p,['place_id','id']);
-    if(!id) errors.push({type:'PLACE_ID_MISSING', index:idx, message:`Places[${idx}] place_id/id 누락`});
-    else if(placeIds.has(id)) duplicatePlaces.push(id);
-    else placeIds.add(id);
+  places.forEach(p=>{
+    if(!p.id) errors.push({type:'PLACE_ID_MISSING', index:p.index, message:`Places[${p.index}] place_id/id 누락`});
+    else if(placeIds.has(p.id)) duplicatePlaces.push(p.id);
+    else placeIds.add(p.id);
   });
 
-  maps.forEach((m,idx)=>{
-    const id = pickId(m,['map_id','id']);
-    if(!id) errors.push({type:'MAP_ID_MISSING', index:idx, message:`Maps[${idx}] map_id/id 누락`});
-    else if(mapIds.has(id)) duplicateMaps.push(id);
-    else mapIds.add(id);
-    const url = pickId(m,['url','href','link']);
-    if(url && !/^https?:\/\//i.test(url)) warnings.push({type:'MAP_URL_FORMAT', map_id:id, message:`지도 URL 형식 확인 필요: ${url}`});
+  maps.forEach(m=>{
+    if(!m.id) errors.push({type:'MAP_ID_MISSING', index:m.index, message:`Maps[${m.index}] map_id/id 누락`});
+    else if(mapIds.has(m.id)) duplicateMaps.push(m.id);
+    else mapIds.add(m.id);
+    if(m.url && !isUrl(m.url)) warnings.push({type:'MAP_URL_FORMAT', map_id:m.id, message:`지도 URL 형식 확인 필요: ${m.url}`});
   });
 
-  const validRelations = new Set(['direct','direct_map','regional','regional_representative','regional_representative_map','era','era_representative','era_representative_map']);
+  const validRelations = new Set([
+    'direct','direct_map','regional','regional_map','regional_representative','regional_representative_map',
+    'era','era_map','era_representative','era_representative_map','related','reference','representative'
+  ]);
 
   links.forEach((l,idx)=>{
-    const placeId = pickId(l,['place_id','placeId','place']);
-    const mapId = pickId(l,['map_id','mapId','map']);
-    const relation = normalizeRelation(pickId(l,['relation_type','relationship','relation','type']));
-    const key = `${placeId}::${mapId}::${relation}`;
+    const placeId = l.placeId;
+    const mapId = l.mapId;
+    const relation = l.relation;
+    const key = `${placeId}::${mapId}::${relation || 'none'}`;
 
-    if(!placeId) errors.push({type:'LINK_PLACE_ID_MISSING', index:idx, message:`Links[${idx}] place_id 누락`});
-    else if(!placeIds.has(placeId)) errors.push({type:'LINK_PLACE_ID_UNKNOWN', index:idx, place_id:placeId, message:`Links[${idx}] place_id가 Places에 없음: ${placeId}`});
+    if(!placeId) errors.push({type:'LINK_PLACE_ID_MISSING', index:l.index, message:`Links[${l.index}] place_id 누락`});
+    else if(!placeIds.has(placeId)) errors.push({type:'LINK_PLACE_ID_UNKNOWN', index:l.index, place_id:placeId, message:`Links[${l.index}] place_id가 Places에 없음: ${placeId}`});
     else usedPlaceIds.add(placeId);
 
-    if(!mapId) errors.push({type:'LINK_MAP_ID_MISSING', index:idx, message:`Links[${idx}] map_id 누락`});
-    else if(!mapIds.has(mapId)) errors.push({type:'LINK_MAP_ID_UNKNOWN', index:idx, map_id:mapId, message:`Links[${idx}] map_id가 Maps에 없음: ${mapId}`});
+    if(!mapId) errors.push({type:'LINK_MAP_ID_MISSING', index:l.index, place_id:placeId, message:`Links[${l.index}] map_id 누락`});
+    else if(!mapIds.has(mapId)) errors.push({type:'LINK_MAP_ID_UNKNOWN', index:l.index, map_id:mapId, message:`Links[${l.index}] map_id가 Maps에 없음: ${mapId}`});
     else usedMapIds.add(mapId);
 
-    if(!relation) warnings.push({type:'RELATION_MISSING', index:idx, place_id:placeId, map_id:mapId, message:`Links[${idx}] relation_type 누락`});
-    else if(!validRelations.has(relation)) warnings.push({type:'RELATION_UNKNOWN', index:idx, relation_type:relation, message:`Links[${idx}] 알 수 없는 relation_type: ${relation}`});
+    if(l.url && !isUrl(l.url)) warnings.push({type:'LINK_URL_FORMAT', index:l.index, place_id:placeId, map_id:mapId, message:`링크 URL 형식 확인 필요: ${l.url}`});
+
+    if(!relation) warnings.push({type:'RELATION_MISSING', index:l.index, place_id:placeId, map_id:mapId, message:`Links[${l.index}] relation_type 누락`});
+    else if(!validRelations.has(relation)) warnings.push({type:'RELATION_UNKNOWN', index:l.index, relation_type:relation, message:`Links[${l.index}] 알 수 없는 relation_type: ${relation}`});
     relationStats[relation || 'missing'] = (relationStats[relation || 'missing'] || 0) + 1;
 
     if(placeId && mapId){
@@ -129,7 +217,7 @@ async function runQA(){
   placesWithoutLinks.forEach(id=>warnings.push({type:'PLACE_WITHOUT_LINK', place_id:id, message:`링크 없는 Place: ${id}`}));
   unusedMaps.forEach(id=>warnings.push({type:'UNUSED_MAP', map_id:id, message:`사용되지 않는 Map: ${id}`}));
 
-  const runtimeInfo = checkRuntime(runtime, placeIds, mapIds);
+  const runtimeInfo = checkRuntime(runtimeLinks, placeIds, mapIds, linkKeys);
   runtimeInfo.errors.forEach(e=>errors.push(e));
   runtimeInfo.warnings.forEach(w=>warnings.push(w));
 
@@ -138,7 +226,7 @@ async function runQA(){
     places: places.length,
     maps: maps.length,
     links: links.length,
-    runtime_items: runtimeInfo.count,
+    runtime_links: runtimeLinks.length,
     relation_stats: relationStats,
     places_without_links: placesWithoutLinks.length,
     unused_maps: unusedMaps.length,
@@ -158,34 +246,17 @@ async function runQA(){
   renderReports(state.reports);
 }
 
-function checkRuntime(runtime, placeIds, mapIds){
-  const errors=[]; const warnings=[]; let count=0;
-  if(!runtime) return {errors,warnings,count};
-  if(Array.isArray(runtime)){
-    count = runtime.length;
-    runtime.forEach((r,idx)=>{
-      const placeId = pickId(r,['place_id','placeId','place']);
-      const mapId = pickId(r,['map_id','mapId','map']);
-      if(placeId && !placeIds.has(placeId)) errors.push({type:'RUNTIME_PLACE_UNKNOWN', index:idx, place_id:placeId, message:`Runtime place_id가 Places에 없음: ${placeId}`});
-      if(mapId && !mapIds.has(mapId)) errors.push({type:'RUNTIME_MAP_UNKNOWN', index:idx, map_id:mapId, message:`Runtime map_id가 Maps에 없음: ${mapId}`});
-    });
-  } else if(typeof runtime === 'object'){
-    const entries = Object.entries(runtime);
-    count = entries.length;
-    entries.forEach(([placeId,value])=>{
-      if(/^P/i.test(placeId) && !placeIds.has(placeId)) errors.push({type:'RUNTIME_PLACE_UNKNOWN', place_id:placeId, message:`Runtime key place_id가 Places에 없음: ${placeId}`});
-      const maps = Array.isArray(value) ? value : (value?.maps || value?.map_ids || []);
-      if(Array.isArray(maps)){
-        maps.forEach(mapId=>{
-          const id = typeof mapId === 'string' ? mapId : pickId(mapId,['map_id','id']);
-          if(id && /^M/i.test(id) && !mapIds.has(id)) errors.push({type:'RUNTIME_MAP_UNKNOWN', place_id:placeId, map_id:id, message:`Runtime map_id가 Maps에 없음: ${id}`});
-        });
-      }
-    });
-  } else {
-    warnings.push({type:'RUNTIME_UNKNOWN_SHAPE', message:'Runtime 구조를 해석하지 못했습니다.'});
-  }
-  return {errors,warnings,count};
+function checkRuntime(runtimeLinks, placeIds, mapIds, masterLinkKeys){
+  const errors=[]; const warnings=[];
+  runtimeLinks.forEach((r,idx)=>{
+    if(r.placeId && !placeIds.has(r.placeId)) errors.push({type:'RUNTIME_PLACE_UNKNOWN', index:r.index ?? idx, place_id:r.placeId, message:`Runtime place_id가 Places에 없음: ${r.placeId}`});
+    if(r.mapId && !mapIds.has(r.mapId)) errors.push({type:'RUNTIME_MAP_UNKNOWN', index:r.index ?? idx, map_id:r.mapId, message:`Runtime map_id가 Maps에 없음: ${r.mapId}`});
+    if(r.placeId && r.mapId){
+      const possible = [...masterLinkKeys].some(k=>k.startsWith(`${r.placeId}::${r.mapId}::`));
+      if(!possible) warnings.push({type:'RUNTIME_NOT_IN_MASTER', place_id:r.placeId, map_id:r.mapId, message:`Runtime 링크가 Master Links에 없음: ${r.placeId} → ${r.mapId}`});
+    }
+  });
+  return {errors,warnings,count:runtimeLinks.length};
 }
 
 function renderReports({qaReport, missingReport, statistics, releaseCheck}){
@@ -200,6 +271,7 @@ function renderReports({qaReport, missingReport, statistics, releaseCheck}){
   document.getElementById('summary').innerHTML = `
     <strong>검사 완료</strong><br>
     Errors: ${statistics.errors} / Warnings: ${statistics.warnings}<br>
+    Runtime Links: ${statistics.runtime_links}<br>
     링크 없는 Place: ${statistics.places_without_links}<br>
     사용되지 않는 Map: ${statistics.unused_maps}<br>
     Release Ready: <strong>${releaseCheck.verdict}</strong>
