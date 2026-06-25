@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cen-studio-v0.1.2';
+const CACHE_NAME = 'cen-studio-v0.1.3';
 const ASSETS = ['./','./index.html','./style.css','./app.js?v=0.1.2','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png'];
 self.addEventListener('install', event=>{
   self.skipWaiting();

@@ -1,4 +1,4 @@
-const BUILD_VERSION = 'v0.1.2';
+const BUILD_VERSION = 'v0.1.3';
 
 const fileInputs = {
   places: document.getElementById('placesFile'),
@@ -60,14 +60,37 @@ function getArray(data, preferredKeys=[]){
     .map(([key,value])=> value && typeof value === 'object' && !Array.isArray(value) ? { _key:key, ...value } : { _key:key, value });
 }
 
+function collectTextValues(item, keys){
+  const out = [];
+  for(const key of keys){
+    const v = item?.[key];
+    if(v === undefined || v === null) continue;
+    if(Array.isArray(v)){
+      v.forEach(x=>{ if(x !== undefined && x !== null && String(x).trim()) out.push(String(x).trim()); });
+    }else if(typeof v === 'object'){
+      Object.values(v).forEach(x=>{ if(typeof x === 'string' && x.trim()) out.push(x.trim()); });
+    }else if(String(v).trim()){
+      out.push(String(v).trim());
+    }
+  }
+  return [...new Set(out)];
+}
+
+function normalizeName(value){
+  return String(value || '').trim().replace(/\s+/g,' ');
+}
+
 function normalizePlaces(data){
   const arr = getArray(data, ['places']);
-  return arr.map((p,idx)=>({
-    raw:p,
-    index:idx,
-    id: pickId(p, ['place_id','placeId','id','_key','pid']),
-    name: pickId(p, ['canonical_name','canonicalName','name','title','ko_name','label'])
-  })).filter(p=>p.id || p.name);
+  return arr.map((p,idx)=>{
+    const id = pickId(p, ['place_id','placeId','id','_key','pid']);
+    const names = collectTextValues(p, [
+      'canonical_name','canonicalName','name','title','ko_name','label','place',
+      'biblical_name','modern_name','display_name','search_name',
+      'aliases','alias','search_keywords','keywords','variants'
+    ]).map(normalizeName).filter(Boolean);
+    return { raw:p, index:idx, id, name:names[0] || '', names };
+  }).filter(p=>p.id || p.name || p.names.length);
 }
 
 function normalizeMaps(data){
@@ -91,7 +114,9 @@ function pushLink(out, item, index, contextPlaceId='', contextMapId=''){
     if(looksLikePlaceId(item)) placeId = item;
     if(looksLikeMapId(item)) mapId = item;
   }else if(item && typeof item === 'object'){
-    placeId = pickId(item, ['place_id','placeId','place','pid','source_place_id','target_place_id']) || placeId;
+    placeId = pickId(item, ['place_id','placeId','pid','source_place_id','target_place_id']) || placeId;
+    const placeText = pickId(item, ['place','place_name','placeName','canonical_name','canonicalName','name','title']);
+    if(!placeId && placeText) placeId = placeText;
     mapId = pickId(item, ['map_id','mapId','map','mid','id','target_map_id']) || mapId;
     if(!mapId && item._key && looksLikeMapId(item._key)) mapId = item._key;
     if(!placeId && item._key && looksLikePlaceId(item._key)) placeId = item._key;
@@ -135,7 +160,9 @@ function normalizeLinks(data){
     if(typeof node !== 'object') return;
 
     const keyName = String(node._key || '').trim();
-    let localPlace = pickId(node, ['place_id','placeId','place','pid','source_place_id']) || contextPlace;
+    let localPlace = pickId(node, ['place_id','placeId','pid','source_place_id']) || contextPlace;
+    const localPlaceText = pickId(node, ['place','place_name','placeName','canonical_name','canonicalName','name','title']);
+    if(!localPlace && localPlaceText) localPlace = localPlaceText;
     let localMap = pickId(node, ['map_id','mapId','map','mid','target_map_id']) || contextMap;
     if(!localPlace && looksLikePlaceId(keyName)) localPlace = keyName;
     if(!localMap && looksLikeMapId(keyName)) localMap = keyName;
@@ -202,10 +229,19 @@ async function runQA(){
   const relationStats = {};
   const linkKeys = new Set();
 
+  const placeNames = new Set();
+  const placeKeyToId = new Map();
+
   places.forEach(p=>{
-    if(!p.id) errors.push({type:'PLACE_ID_MISSING', index:p.index, message:`Places[${p.index}] place_id/id 누락`});
+    if(!p.id) warnings.push({type:'PLACE_ID_MISSING', index:p.index, message:`Places[${p.index}] place_id/id 누락`});
     else if(placeIds.has(p.id)) duplicatePlaces.push(p.id);
     else placeIds.add(p.id);
+
+    if(p.id) placeKeyToId.set(normalizeName(p.id), p.id);
+    p.names.forEach(n=>{
+      const key = normalizeName(n);
+      if(key){ placeNames.add(key); if(p.id) placeKeyToId.set(key, p.id); }
+    });
   });
 
   maps.forEach(m=>{
@@ -216,33 +252,47 @@ async function runQA(){
   });
 
   const validRelations = new Set([
-    'direct','direct_map','directmap','direct_map_available',
-    'regional','regional_map','regional_representative','regional_representative_map','regionalrepresentativemap',
-    'era','era_map','era_representative','era_representative_map','erarepresentativemap',
+    // CEN BibleMaps v1.x relation types
+    'related_map','era_context','regional_context','route_context','narrative_context','recommended_context',
+    'direct_map','regional_representative_map','era_representative_map',
+    // earlier/fallback aliases
+    'direct','directmap','direct_map_available',
+    'regional','regional_map','regional_representative','regionalrepresentativemap',
+    'era','era_map','era_representative','erarepresentativemap',
     'related','reference','representative','representative_map','primary','secondary'
   ]);
 
+  function resolvePlaceKey(value){
+    const key = normalizeName(value);
+    if(!key) return { ok:false, key:'', kind:'missing' };
+    if(placeIds.has(key)) return { ok:true, key, kind:'id', id:key };
+    if(placeNames.has(key)) return { ok:true, key, kind:'name', id:placeKeyToId.get(key) || key };
+    // Links Master는 Place Master보다 넓은 검색 인덱스일 수 있으므로 unknown은 error가 아니라 coverage warning이다.
+    return { ok:false, key, kind:'external' };
+  }
+
   links.forEach((l)=>{
-    const placeId = l.placeId;
+    const placeKey = normalizeName(l.placeId);
     const mapId = l.mapId;
     const relation = l.relation;
-    const key = `${placeId}::${mapId}::${relation || 'none'}`;
+    const resolvedPlace = resolvePlaceKey(placeKey);
+    const key = `${placeKey}::${mapId}::${relation || 'none'}`;
 
-    if(!placeId) errors.push({type:'LINK_PLACE_ID_MISSING', index:l.index, message:`Links[${l.index}] place_id 누락`});
-    else if(!placeIds.has(placeId)) errors.push({type:'LINK_PLACE_ID_UNKNOWN', index:l.index, place_id:placeId, message:`Links[${l.index}] place_id가 Places에 없음: ${placeId}`});
-    else usedPlaceIds.add(placeId);
+    if(!placeKey) errors.push({type:'LINK_PLACE_MISSING', index:l.index, message:`Links[${l.index}] place/place_id 누락`});
+    else if(!resolvedPlace.ok) warnings.push({type:'LINK_PLACE_NOT_IN_PLACE_MASTER', index:l.index, place:placeKey, message:`Links[${l.index}] place가 Places Master에는 없음(검색 링크 전용 가능): ${placeKey}`});
+    else usedPlaceIds.add(resolvedPlace.id || resolvedPlace.key);
 
-    if(!mapId) errors.push({type:'LINK_MAP_ID_MISSING', index:l.index, place_id:placeId, message:`Links[${l.index}] map_id 누락`});
+    if(!mapId) errors.push({type:'LINK_MAP_ID_MISSING', index:l.index, place:placeKey, message:`Links[${l.index}] map_id 누락`});
     else if(!mapIds.has(mapId)) errors.push({type:'LINK_MAP_ID_UNKNOWN', index:l.index, map_id:mapId, message:`Links[${l.index}] map_id가 Maps에 없음: ${mapId}`});
     else usedMapIds.add(mapId);
 
-    if(l.url && !isUrl(l.url)) warnings.push({type:'LINK_URL_FORMAT', index:l.index, place_id:placeId, map_id:mapId, message:`링크 URL 형식 확인 필요: ${l.url}`});
+    if(l.url && !isUrl(l.url)) warnings.push({type:'LINK_URL_FORMAT', index:l.index, place:placeKey, map_id:mapId, message:`링크 URL 형식 확인 필요: ${l.url}`});
 
-    if(!relation) warnings.push({type:'RELATION_MISSING', index:l.index, place_id:placeId, map_id:mapId, message:`Links[${l.index}] relation_type 누락`});
+    if(!relation) warnings.push({type:'RELATION_MISSING', index:l.index, place:placeKey, map_id:mapId, message:`Links[${l.index}] relation_type 누락`});
     else if(!validRelations.has(relation)) warnings.push({type:'RELATION_UNKNOWN', index:l.index, relation_type:relation, message:`Links[${l.index}] 알 수 없는 relation_type: ${relation}`});
     relationStats[relation || 'missing'] = (relationStats[relation || 'missing'] || 0) + 1;
 
-    if(placeId && mapId){
+    if(placeKey && mapId){
       if(linkKeys.has(key)) duplicateLinks.push(key);
       else linkKeys.add(key);
     }
@@ -252,7 +302,10 @@ async function runQA(){
   duplicateMaps.forEach(id=>errors.push({type:'DUPLICATE_MAP_ID', map_id:id, message:`중복 map_id: ${id}`}));
   duplicateLinks.slice(0,200).forEach(key=>warnings.push({type:'DUPLICATE_LINK', key, message:`중복 링크: ${key}`}));
 
-  const placesWithoutLinks = [...placeIds].filter(id=>!usedPlaceIds.has(id));
+  const placesWithoutLinks = places.filter(p=>{
+    const keys = [p.id, ...p.names].map(normalizeName).filter(Boolean);
+    return !keys.some(k=>usedPlaceIds.has(k) || usedPlaceIds.has(placeKeyToId.get(k)));
+  }).map(p=>p.id || p.name || `Places[${p.index}]`);
   const unusedMaps = [...mapIds].filter(id=>!usedMapIds.has(id));
   placesWithoutLinks.forEach(id=>warnings.push({type:'PLACE_WITHOUT_LINK', place_id:id, message:`링크 없는 Place: ${id}`}));
   unusedMaps.forEach(id=>warnings.push({type:'UNUSED_MAP', map_id:id, message:`사용되지 않는 Map: ${id}`}));
@@ -291,11 +344,12 @@ async function runQA(){
 function checkRuntime(runtimeLinks, placeIds, mapIds, masterLinkKeys){
   const errors=[]; const warnings=[];
   runtimeLinks.forEach((r,idx)=>{
-    if(r.placeId && !placeIds.has(r.placeId)) errors.push({type:'RUNTIME_PLACE_UNKNOWN', index:r.index ?? idx, place_id:r.placeId, message:`Runtime place_id가 Places에 없음: ${r.placeId}`});
+    const placeKey = normalizeName(r.placeId);
     if(r.mapId && !mapIds.has(r.mapId)) errors.push({type:'RUNTIME_MAP_UNKNOWN', index:r.index ?? idx, map_id:r.mapId, message:`Runtime map_id가 Maps에 없음: ${r.mapId}`});
-    if(r.placeId && r.mapId){
-      const possible = [...masterLinkKeys].some(k=>k.startsWith(`${r.placeId}::${r.mapId}::`));
-      if(!possible) warnings.push({type:'RUNTIME_NOT_IN_MASTER', place_id:r.placeId, map_id:r.mapId, message:`Runtime 링크가 Master Links에 없음: ${r.placeId} → ${r.mapId}`});
+    // Runtime의 place는 place_id가 아니라 한글 place key일 수 있으므로 Places Master 존재 여부는 release 차단 오류로 보지 않는다.
+    if(placeKey && r.mapId){
+      const possible = [...masterLinkKeys].some(k=>k.startsWith(`${placeKey}::${r.mapId}::`));
+      if(!possible) warnings.push({type:'RUNTIME_NOT_IN_MASTER', place:placeKey, map_id:r.mapId, message:`Runtime 링크가 Master Links에 없음: ${placeKey} → ${r.mapId}`});
     }
   });
   return {errors,warnings,count:runtimeLinks.length};
