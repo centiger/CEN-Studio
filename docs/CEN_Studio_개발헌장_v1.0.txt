@@ -1,0 +1,71 @@
+CEN Studio 개발 헌장 v1.0
+
+프로젝트명
+
+CEN Studio
+
+부제: CEN 프로젝트를 위한 통합 개발·품질관리 플랫폼
+
+1. 존재 목적
+
+CEN Studio는 사용자를 위한 앱이 아니다. CEN BibleMaps, Matrix,
+BibleMeasures, Timeline 등 CEN 프로젝트 전체의 개발, 품질관리(QA),
+릴리스 관리를 위한 개발자 전용 도구이다.
+
+2. 핵심 철학
+
+1.  반복 검사는 사람이 하지 않는다.
+2.  프로그램은 검사를 담당하고 AI는 분석과 판단을 담당한다.
+3.  사람은 콘텐츠를 만들고 Studio는 품질을 보증한다.
+4.  QA는 개발을 늦추는 것이 아니라 개발 속도를 높이는 도구이다.
+
+3. 개발 원칙
+
+Studio는 DB를 직접 수정하지 않는다. Studio는 검사하고, 분석하고,
+보고한다. 수정은 AI와 개발자가 수행한다.
+
+4. 자동화 원칙
+
+반복 가능한 작업은 모두 자동화한다. - JSON 검사 - URL 검사 - map_id
+검사 - Place 검사 - Runtime 생성 - 중복 검사 - 누락 검사 - Release 검사
+
+5. 보고 원칙
+
+Studio는 항상 다음 네 가지를 출력한다. - QA Report - Missing Report -
+Statistics - Release Ready
+
+6. 오류 분류 원칙
+
+ERROR : 반드시 수정 WARNING : 검토 필요 INFO : 참고 정보 및 통계
+
+7. 확장성 원칙
+
+BibleMaps, Matrix, BibleMeasures, Timeline, Search QA, Release
+Builder까지 확장한다.
+
+8. 독립성 원칙
+
+Studio는 독립 PWA로 운영한다.
+
+9. 정확성 원칙
+
+Studio는 추측하지 않는다. 실제 DB와 실제 스키마를 기준으로 검사한다.
+
+10. 최종 목표
+
+AI와 함께 개발하는 CEN 프로젝트의 자동 품질관리 시스템을 구축한다.
+
+개발자는 콘텐츠를 만들고, Studio는 검사하며, AI는 분석과 해결책을
+제시한다.
+
+장기 로드맵
+
+Phase 1 - BibleMaps QA - JSON 검사 - Runtime 검사 - URL 검사 - Release
+Ready
+
+Phase 2 - Place Coverage Analyzer - Search Coverage Analyzer - Runtime
+Builder - Link Coverage Analyzer
+
+Phase 3 - Matrix QA - BibleMeasures QA - Timeline QA
+
+Phase 4 - Release Builder - GitHub 연동 - 자동 QA Report 생성
