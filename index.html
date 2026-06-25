@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CEN Studio v0.1</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <div class="badge">CEN Developer Tool</div>
+      <h1>CEN Studio</h1>
+      <p>BibleMaps QA Checker v0.1</p>
+    </header>
+
+    <section class="panel">
+      <h2>1. JSON 파일 불러오기</h2>
+      <p class="hint">현재 버전은 브라우저 안에서만 검사합니다. 서버 업로드 없음. 즉, 안전합니다.</p>
+
+      <div class="file-grid">
+        <label class="file-card">
+          <span>Places Master</span>
+          <input id="placesFile" type="file" accept=".json,application/json" />
+          <small id="placesName">선택 안 됨</small>
+        </label>
+
+        <label class="file-card">
+          <span>Maps Master</span>
+          <input id="mapsFile" type="file" accept=".json,application/json" />
+          <small id="mapsName">선택 안 됨</small>
+        </label>
+
+        <label class="file-card">
+          <span>Place-Map Links Master</span>
+          <input id="linksFile" type="file" accept=".json,application/json" />
+          <small id="linksName">선택 안 됨</small>
+        </label>
+
+        <label class="file-card">
+          <span>Runtime Links</span>
+          <input id="runtimeFile" type="file" accept=".json,application/json" />
+          <small id="runtimeName">선택 안 됨</small>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="runBtn">Run QA</button>
+        <button id="clearBtn" class="secondary">Clear</button>
+      </div>
+    </section>
+
+    <section class="panel result-panel">
+      <h2>2. 검사 결과</h2>
+      <div id="summary" class="summary empty">아직 검사 전입니다. 파일을 넣고 Run QA를 누르세요.</div>
+
+      <div class="download-row">
+        <button id="downloadQa" class="secondary" disabled>QA Report 다운로드</button>
+        <button id="downloadMissing" class="secondary" disabled>Missing Report 다운로드</button>
+        <button id="downloadStats" class="secondary" disabled>Statistics 다운로드</button>
+        <button id="downloadRelease" class="secondary" disabled>Release Check 다운로드</button>
+      </div>
+
+      <pre id="reportBox" class="report-box"></pre>
+    </section>
+
+    <footer>
+      <p>원칙: 사람은 판단하고, 프로그램은 반복한다.</p>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
