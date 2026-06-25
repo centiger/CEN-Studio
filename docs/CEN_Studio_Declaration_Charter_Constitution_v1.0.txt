@@ -1,0 +1,59 @@
+CEN Studio 문서 세트 v1.0
+
+==================================== 1. CEN Studio Declaration (선언문)
+====================================
+
+CEN Studio는 성경 데이터를 가장 신뢰할 수 있는 형태로 구축하여, 누구나
+성경의 장소와 역사와 사건을 쉽고 정확하게 탐험할 수 있도록 돕는 Bible
+Data Platform을 지향한다.
+
+핵심 철학 - Data First - Place First - QA First - Stable Before Smart
+
+표어 - Reliable Bible Data. - Built to Last. - Place First. - Truth
+Before Technology.
+
+==================================== 2. CEN Studio Charter (헌장)
+====================================
+
+1.  Data First
+2.  Place First
+3.  Canonical First
+4.  QA First
+5.  Batch Production
+6.  Non-destructive
+7.  GitHub Checkpoint
+8.  JSON First
+9.  Automation
+10. Release Rule
+11. Stable Before Smart
+12. User Trust First
+
+==================================== 3. CEN Studio Constitution (개발
+헌법) ====================================
+
+핵심 가치 - Data First - Place First - QA First - Stable Before Smart
+
+데이터 원칙 - Canonical DB는 단일 진실 공급원이다. - Runtime DB는
+Canonical DB로부터 생성한다. - JSON을 기본 데이터 형식으로 사용한다. -
+Master DB는 직접 수정하지 않고 Expansion Batch로 확장한다.
+
+개발 원칙 - Batch 단위 생산 - GitHub Checkpoint 관리 - 반복 작업
+자동화 - QA Studio를 통한 지속적 검증
+
+BibleMaps 원칙 - Direct Map 우선 - Regional Map 차선 - Era Map 최후
+대안 - 대표지도를 전용지도처럼 표현하지 않는다.
+
+Release 원칙 - QA 통과 후 Release - Archive 보존 - 재현 가능한 빌드
+
+==================================== 4. 개발 철학
+====================================
+
+기능보다 데이터 AI보다 안정성 설명보다 정확성 속도보다 품질
+
+Place First Data First QA First Stable Before Smart
+
+==================================== CEN Studio Motto
+====================================
+
+Reliable Bible Data. Built to Last. Place First. Truth Before
+Technology.
