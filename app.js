@@ -1,3 +1,5 @@
+const BUILD_VERSION = 'v0.1.2';
+
 const fileInputs = {
   places: document.getElementById('placesFile'),
   maps: document.getElementById('mapsFile'),
@@ -38,10 +40,10 @@ function pickId(item, keys){
   return '';
 }
 function normalizeRelation(value){
-  return String(value || '').trim().toLowerCase().replace(/-/g,'_');
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g,'_');
 }
-function looksLikePlaceId(id){ return /^P\d+/i.test(String(id||'')); }
-function looksLikeMapId(id){ return /^M\d+/i.test(String(id||'')); }
+function looksLikePlaceId(id){ return /^P\d+/i.test(String(id||'').trim()); }
+function looksLikeMapId(id){ return /^M\d+/i.test(String(id||'').trim()); }
 function isUrl(value){ return /^https?:\/\//i.test(String(value||'')); }
 
 function getArray(data, preferredKeys=[]){
@@ -53,88 +55,124 @@ function getArray(data, preferredKeys=[]){
   for(const key of ['places','maps','links','items','data','records','list']){
     if(Array.isArray(data[key])) return data[key];
   }
-  // 객체 자체가 { P001:{...}, P002:{...} } 또는 { M001:{...} } 형태일 때 보존
-  return Object.entries(data).map(([key,value])=>{
-    if(value && typeof value === 'object' && !Array.isArray(value)) return { _key:key, ...value };
-    return { _key:key, value };
-  });
+  return Object.entries(data)
+    .filter(([key])=>!['version','generated_at','generatedAt','metadata','meta','schema','stats','statistics'].includes(key))
+    .map(([key,value])=> value && typeof value === 'object' && !Array.isArray(value) ? { _key:key, ...value } : { _key:key, value });
 }
 
 function normalizePlaces(data){
   const arr = getArray(data, ['places']);
-  return arr.map((p,idx)=>{
-    const id = pickId(p, ['place_id','placeId','id','_key']);
-    const name = pickId(p, ['canonical_name','name','title','ko_name','label']);
-    return { raw:p, index:idx, id, name };
-  });
+  return arr.map((p,idx)=>({
+    raw:p,
+    index:idx,
+    id: pickId(p, ['place_id','placeId','id','_key','pid']),
+    name: pickId(p, ['canonical_name','canonicalName','name','title','ko_name','label'])
+  })).filter(p=>p.id || p.name);
 }
 
 function normalizeMaps(data){
   const arr = getArray(data, ['maps']);
-  return arr.map((m,idx)=>{
-    const id = pickId(m, ['map_id','mapId','id','_key']);
-    const title = pickId(m, ['title','name','map_title','label']);
-    const url = pickId(m, ['url','href','link','official_url','map_url']);
-    return { raw:m, index:idx, id, title, url };
-  });
+  return arr.map((m,idx)=>({
+    raw:m,
+    index:idx,
+    id: pickId(m, ['map_id','mapId','id','_key','mid']),
+    title: pickId(m, ['title','name','map_title','label']),
+    url: pickId(m, ['url','href','link','official_url','map_url'])
+  })).filter(m=>m.id || m.title || m.url);
+}
+
+function pushLink(out, item, index, contextPlaceId='', contextMapId=''){
+  let placeId = contextPlaceId || '';
+  let mapId = contextMapId || '';
+  let relation = '';
+  let url = '';
+
+  if(typeof item === 'string'){
+    if(looksLikePlaceId(item)) placeId = item;
+    if(looksLikeMapId(item)) mapId = item;
+  }else if(item && typeof item === 'object'){
+    placeId = pickId(item, ['place_id','placeId','place','pid','source_place_id','target_place_id']) || placeId;
+    mapId = pickId(item, ['map_id','mapId','map','mid','id','target_map_id']) || mapId;
+    if(!mapId && item._key && looksLikeMapId(item._key)) mapId = item._key;
+    if(!placeId && item._key && looksLikePlaceId(item._key)) placeId = item._key;
+    relation = normalizeRelation(pickId(item, ['relation_type','relationship','relation','type','map_relation','mapRelationship','relationship_type']));
+    url = pickId(item, ['url','href','link','map_url','official_url']);
+  }
+
+  placeId = String(placeId||'').trim();
+  mapId = String(mapId||'').trim();
+  if(placeId || mapId || relation || url){
+    out.push({ raw:item, index, placeId, mapId, relation, url });
+  }
 }
 
 function normalizeLinks(data){
   const out = [];
-  if(!data) return out;
-
-  // 배열형: [{place_id,map_id,...}, ...]
-  if(Array.isArray(data)){
-    data.forEach((item,idx)=>pushLinkItem(out, item, idx));
-    return out;
-  }
-
-  if(typeof data !== 'object') return out;
-
-  // 래퍼형: { links:[...] } / { place_map_links:[...] }
-  for(const key of ['links','place_map_links','placeMapLinks','items','data','records']){
-    if(Array.isArray(data[key])){
-      data[key].forEach((item,idx)=>pushLinkItem(out, item, idx));
-      return out;
+  const seen = new Set();
+  const add = (item, index, place='', map='')=>{
+    const before = out.length;
+    pushLink(out, item, index, place, map);
+    if(out.length > before){
+      const l = out[out.length-1];
+      const key = `${l.index}|${l.placeId}|${l.mapId}|${l.relation}|${l.url}`;
+      if(seen.has(key)) out.pop(); else seen.add(key);
     }
-  }
+  };
 
-  // 객체형: { P001:[{map_id...}, "M001"], P002:{maps:[...]}, ... }
-  Object.entries(data).forEach(([placeKey,value],idx)=>{
-    if(Array.isArray(value)){
-      value.forEach((v,j)=>pushLinkItem(out, v, `${placeKey}.${j}`, placeKey));
-    }else if(value && typeof value === 'object'){
-      const nested = value.maps || value.map_ids || value.links || value.items || value.data;
-      if(Array.isArray(nested)){
-        nested.forEach((v,j)=>pushLinkItem(out, v, `${placeKey}.${j}`, placeKey, value));
-      }else{
-        pushLinkItem(out, value, idx, placeKey);
+  function walk(node, path='root', contextPlace='', contextMap=''){
+    if(node == null) return;
+
+    if(typeof node === 'string'){
+      if(contextPlace && looksLikeMapId(node)) add(node, path, contextPlace, node);
+      return;
+    }
+
+    if(Array.isArray(node)){
+      node.forEach((v,i)=>walk(v, `${path}[${i}]`, contextPlace, contextMap));
+      return;
+    }
+
+    if(typeof node !== 'object') return;
+
+    const keyName = String(node._key || '').trim();
+    let localPlace = pickId(node, ['place_id','placeId','place','pid','source_place_id']) || contextPlace;
+    let localMap = pickId(node, ['map_id','mapId','map','mid','target_map_id']) || contextMap;
+    if(!localPlace && looksLikePlaceId(keyName)) localPlace = keyName;
+    if(!localMap && looksLikeMapId(keyName)) localMap = keyName;
+
+    // 현재 객체 자체가 link 레코드인 경우
+    if(localPlace || localMap || pickId(node, ['relation_type','relationship','relation','type','map_relation'])){
+      add(node, path, localPlace, localMap);
+    }
+
+    // place 하나 아래에 maps 배열/객체가 들어있는 경우 우선 처리
+    const mapContainers = ['maps','map_refs','mapRefs','map_ids','mapIds','external_map_refs','externalMapRefs','related_maps','relatedMaps','links','place_map_links','placeMapLinks'];
+    for(const k of mapContainers){
+      if(node[k] !== undefined){
+        walk(node[k], `${path}.${k}`, localPlace, localMap);
       }
-    }else if(typeof value === 'string'){
-      pushLinkItem(out, value, idx, placeKey);
     }
-  });
-  return out;
-}
 
-function pushLinkItem(out, item, index, fallbackPlaceId='', parent={}){
-  let placeId='', mapId='', relation='', url='';
-  if(typeof item === 'string'){
-    placeId = fallbackPlaceId;
-    mapId = item;
-  }else if(item && typeof item === 'object'){
-    placeId = pickId(item, ['place_id','placeId','place','pid']) || fallbackPlaceId || pickId(parent,['place_id','placeId','id']);
-    mapId = pickId(item, ['map_id','mapId','map','mid','id']);
-    relation = normalizeRelation(pickId(item, ['relation_type','relationship','relation','type','map_relation']));
-    url = pickId(item, ['url','href','link','map_url']);
-    // {M001:{...}}에서 key가 map_id일 수 있음
-    if(!mapId && item._key && looksLikeMapId(item._key)) mapId = item._key;
+    // 일반 객체 순회. metadata 계열은 스킵
+    for(const [k,v] of Object.entries(node)){
+      if(k === '_key' || mapContainers.includes(k)) continue;
+      if(['version','generated_at','generatedAt','metadata','meta','schema','stats','statistics','description','note','notes'].includes(k)) continue;
+      let nextPlace = localPlace;
+      let nextMap = localMap;
+      if(looksLikePlaceId(k)) nextPlace = k;
+      if(looksLikeMapId(k)) nextMap = k;
+      walk(v, `${path}.${k}`, nextPlace, nextMap);
+    }
   }
-  out.push({ raw:item, index, placeId:String(placeId||'').trim(), mapId:String(mapId||'').trim(), relation, url });
-}
 
-function runtimeEntries(data){
-  return normalizeLinks(data);
+  if(Array.isArray(data)) data.forEach((v,i)=>walk(v, `[${i}]`));
+  else if(data && typeof data === 'object'){
+    for(const [k,v] of Object.entries(data)){
+      if(['version','generated_at','generatedAt','metadata','meta','schema','stats','statistics'].includes(k)) continue;
+      walk(v, k, looksLikePlaceId(k) ? k : '', looksLikeMapId(k) ? k : '');
+    }
+  }
+  return out.filter(l=>l.placeId || l.mapId);
 }
 
 async function runQA(){
@@ -152,7 +190,7 @@ async function runQA(){
   const places = normalizePlaces(loaded[0].data);
   const maps = normalizeMaps(loaded[1].data);
   const links = normalizeLinks(loaded[2].data);
-  const runtimeLinks = runtimeEntries(loaded[3].data);
+  const runtimeLinks = normalizeLinks(loaded[3].data);
 
   const placeIds = new Set();
   const mapIds = new Set();
@@ -178,11 +216,13 @@ async function runQA(){
   });
 
   const validRelations = new Set([
-    'direct','direct_map','regional','regional_map','regional_representative','regional_representative_map',
-    'era','era_map','era_representative','era_representative_map','related','reference','representative'
+    'direct','direct_map','directmap','direct_map_available',
+    'regional','regional_map','regional_representative','regional_representative_map','regionalrepresentativemap',
+    'era','era_map','era_representative','era_representative_map','erarepresentativemap',
+    'related','reference','representative','representative_map','primary','secondary'
   ]);
 
-  links.forEach((l,idx)=>{
+  links.forEach((l)=>{
     const placeId = l.placeId;
     const mapId = l.mapId;
     const relation = l.relation;
@@ -210,7 +250,7 @@ async function runQA(){
 
   duplicatePlaces.forEach(id=>errors.push({type:'DUPLICATE_PLACE_ID', place_id:id, message:`중복 place_id: ${id}`}));
   duplicateMaps.forEach(id=>errors.push({type:'DUPLICATE_MAP_ID', map_id:id, message:`중복 map_id: ${id}`}));
-  duplicateLinks.forEach(key=>warnings.push({type:'DUPLICATE_LINK', key, message:`중복 링크: ${key}`}));
+  duplicateLinks.slice(0,200).forEach(key=>warnings.push({type:'DUPLICATE_LINK', key, message:`중복 링크: ${key}`}));
 
   const placesWithoutLinks = [...placeIds].filter(id=>!usedPlaceIds.has(id));
   const unusedMaps = [...mapIds].filter(id=>!usedMapIds.has(id));
@@ -222,6 +262,7 @@ async function runQA(){
   runtimeInfo.warnings.forEach(w=>warnings.push(w));
 
   const statistics = {
+    build_version: BUILD_VERSION,
     generated_at: new Date().toISOString(),
     places: places.length,
     maps: maps.length,
@@ -235,8 +276,9 @@ async function runQA(){
   };
 
   const missingReport = { places_without_links: placesWithoutLinks, unused_maps: unusedMaps };
-  const qaReport = { generated_at: statistics.generated_at, errors, warnings };
+  const qaReport = { build_version: BUILD_VERSION, generated_at: statistics.generated_at, errors, warnings };
   const releaseCheck = {
+    build_version: BUILD_VERSION,
     release_ready: errors.length === 0,
     errors: errors.length,
     warnings: warnings.length,
@@ -269,13 +311,15 @@ function renderReports({qaReport, missingReport, statistics, releaseCheck}){
   releaseCard.classList.toggle('no', !releaseCheck.release_ready);
 
   document.getElementById('summary').innerHTML = `
-    <strong>검사 완료</strong><br>
+    <strong>검사 완료 (${BUILD_VERSION})</strong><br>
     Errors: ${statistics.errors} / Warnings: ${statistics.warnings}<br>
+    Master Links: ${statistics.links}<br>
     Runtime Links: ${statistics.runtime_links}<br>
     링크 없는 Place: ${statistics.places_without_links}<br>
     사용되지 않는 Map: ${statistics.unused_maps}<br>
     Release Ready: <strong>${releaseCheck.verdict}</strong>
   `;
+  renderTopIssues(qaReport.errors, qaReport.warnings);
   document.getElementById('reportOutput').textContent = JSON.stringify({qaReport, missingReport, statistics, releaseCheck}, null, 2);
 
   setDownload('downloadQa','qa-report.json',qaReport);
@@ -284,6 +328,16 @@ function renderReports({qaReport, missingReport, statistics, releaseCheck}){
   setDownload('downloadRelease','release-check.json',releaseCheck);
 }
 
+function renderTopIssues(errors, warnings){
+  const box = document.getElementById('topIssues');
+  if(!box) return;
+  const topErrors = errors.slice(0,10).map(e=>`<li><b>ERROR</b> ${escapeHtml(e.message || e.type)}</li>`).join('');
+  const topWarnings = warnings.slice(0,10).map(w=>`<li><b>WARN</b> ${escapeHtml(w.message || w.type)}</li>`).join('');
+  box.innerHTML = `<h3>상위 이슈 미리보기</h3><ul>${topErrors || '<li>ERROR 없음</li>'}${topWarnings || '<li>WARNING 없음</li>'}</ul>`;
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+}
 function setDownload(buttonId, filename, data){
   const btn = document.getElementById(buttonId);
   btn.disabled = false;
@@ -302,6 +356,6 @@ function downloadJson(filename,data){
 
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{
-    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    navigator.serviceWorker.register('./sw.js?v=0.1.2').catch(()=>{});
   });
 }
