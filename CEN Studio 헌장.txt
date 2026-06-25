@@ -1,1 +1,117 @@
-hh
+CEN Studio 헌장 (Charter v1.0)
+
+«Build Reliable Bible Data Before Building Features»
+
+---
+
+제1조. Data First
+
+모든 기능보다 데이터의 정확성을 우선한다.
+
+---
+
+제2조. Place First
+
+모든 탐색과 연결의 중심은 Place이다.
+
+Event와 People은 Place를 보조하는 데이터로 활용한다.
+
+---
+
+제3조. Canonical First
+
+Canonical DB를 단일 진실 공급원(Single Source of Truth)으로 유지한다.
+
+모든 Runtime DB는 Canonical DB로부터 생성된다.
+
+---
+
+제4조. QA First
+
+새로운 기능 개발보다 데이터 검증을 우선한다.
+
+QA를 통과하지 않은 데이터는 Release하지 않는다.
+
+---
+
+제5조. Batch Production
+
+모든 데이터는 Batch 단위로 생산한다.
+
+대규모 수정은 Batch와 Checkpoint를 기준으로 관리한다.
+
+---
+
+제6조. Non-destructive
+
+Master DB를 직접 수정하지 않는다.
+
+모든 변경은 Expansion Batch를 통해 추가한다.
+
+---
+
+제7조. GitHub Checkpoint
+
+GitHub는 개발 공간이 아니라 공식 Checkpoint 저장소이다.
+
+모든 주요 마일스톤은 Checkpoint 단위로 보존한다.
+
+---
+
+제8조. JSON First
+
+작업 데이터는 JSON을 기본 형식으로 사용한다.
+
+모바일 환경에서도 안정적으로 이어서 작업할 수 있도록 설계한다.
+
+---
+
+제9조. Automation
+
+반복 작업은 가능한 자동화한다.
+
+사람은 판단과 품질 검증에 집중한다.
+
+---
+
+제10조. Release Rule
+
+모든 Release는 QA를 통과한 이후에만 배포한다.
+
+---
+
+제11조. Stable Before Smart
+
+화려한 기능보다 안정적인 데이터를 우선한다.
+
+AI는 데이터를 보완하는 도구일 뿐, 데이터의 정확성을 대신하지 않는다.
+
+---
+
+제12조. User Trust First
+
+사용자가 검색한 장소는 반드시 신뢰할 수 있는 결과를 제공해야 한다.
+
+없는 정보를 있는 것처럼 표현하지 않는다.
+
+Direct Map, Regional Map, Era Map의 관계를 명확히 구분하여 사용자의 기대를 보호한다.
+
+---
+
+개발 철학
+
+Place First
+
+Data First
+
+QA First
+
+Stable Before Smart
+
+이 네 가지 원칙은 CEN Studio가 앞으로도 변하지 않고 지켜야 할 핵심 가치이다.
+
+---
+
+CEN Studio Charter v1.0
+
+"Reliable Bible Data, Built to Last."
